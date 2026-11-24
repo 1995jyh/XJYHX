@@ -10,13 +10,16 @@
 | 2 | `02-reaction-gallery-daily-updates.md` | 리액션 갤러리 일일 업데이트 기록 + 업데이트 포맷 + 누적 관리 규칙 |
 | 3 | `prompts/03-x-viral-quote-prompt.md` | X 바이럴 게시물 탐색 & 인용글 초안 (200~500자) |
 | 4 | `prompts/04-overseas-video-collect-prompt.md` | 해외 실사 영상 10개 수집 (동물 5 + 음식·화제 5) |
+| 6 | `prompts/06-animal-food-video-prompt.md` | **(메인)** 동물·음식 영상 워터마크 없이 수집 + 동물 짤 (스크립트: `scripts/video_collect.py`) |
 | 5 | `prompts/05-community-celeb-x-prompt.md` | 국내 커뮤니티 연예 화제글 10건 → X 업로드글 (스크립트: `scripts/community_collect.py`) |
 
 ## 모바일 단축 명령
 
+> 2026-11-24: 연예·꿀팁·아이돌 자동 실행은 일시정지. 메인은 문서 6 (동물·음식 영상).
+
 - **"짤 업데이트" / "갤러리 업데이트"** → 문서 1·2 기준으로 오늘 날짜 신규 GIF/짤 3~10개 + 영어 표현 5개 수집, 문서 2의 포맷으로 정리하고 `02-...md` 맨 아래(누적 관리 규칙 앞)에 날짜 섹션을 추가.
 - **"X 바이럴" / "인용글"** (+ 분야 선택 가능, 예: "X 바이럴 AI") → 문서 3 프롬프트 그대로 실행.
-- **"해외 영상"** → 문서 4 프롬프트 그대로 실행.
+- **"영상" / "동물 영상" / "음식 영상" / "해외 영상"** → 문서 6 실행 (워터마크 없는 mp4). "동물 짤"이면 `--still`로 짤 위주.
 - **"연예 썰" / "커뮤 X"** → 문서 5 프롬프트 실행. 반드시 `scripts/community_collect.py`로 목록·본문·중복 처리.
 - **"아이돌" / "차트"** → 문서 5의 아이돌 모드(`chart`, `list --mode idol`, `export --prefix 아이돌`)로 실행.
 - **"꿀팁"** (+ 인생/부업/IT/생활 선택 가능) → 문서 5의 꿀팁 모드(`list --mode tips`, `export --prefix 꿀팁`)로 실행.
