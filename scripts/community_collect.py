@@ -51,14 +51,17 @@ def norm_url(u):
     m = re.search(r"instiz\.net/pt/(\d+)", u)
     if m:
         return f"https://www.instiz.net/pt/{m.group(1)}"
+    m = re.search(r"clien\.net/service/board/(\w+)/(\d+)", u)
+    if m:
+        return f"https://www.clien.net/service/board/{m.group(1)}/{m.group(2)}"
     m = re.search(r"id=dcbest&(?:amp;)?no=(\d+)", u)
     if m:
         return f"https://gall.dcinside.com/board/view/?id=dcbest&no={m.group(1)}"
     return u
 
 
-def src_pann():
-    s = get("https://pann.nate.com/talk/ranking?rankingType=enter")
+def src_pann(ranking="enter"):
+    s = get(f"https://pann.nate.com/talk/ranking?rankingType={ranking}")
     out = []
     for li in s.select("ul.post_wrap > li, .cntList li"):
         a = li.select_one("h2 a, dt a")
@@ -73,7 +76,7 @@ def src_pann():
     return out
 
 
-def src_dc(pages=2):
+def src_dc(pages=2, ent_only=True):
     out = []
     for p in range(1, pages + 1):
         s = get(f"https://gall.dcinside.com/board/lists/?id=dcbest&page={p}")
@@ -82,7 +85,7 @@ def src_dc(pages=2):
             if not a or tr.get("data-type") == "icon_notice":
                 continue
             tag = (a.select_one("strong").get_text(strip=True) if a.select_one("strong") else "")
-            if not any(t in tag for t in DC_ENT_TAGS):
+            if ent_only and not any(t in tag for t in DC_ENT_TAGS):
                 continue
             title = a.get_text(" ", strip=True)
             dtag = tr.select_one("td.gall_date")
@@ -116,6 +119,35 @@ def src_instiz(pages=3):
     return out
 
 
+# 꿀팁 모드: 클리앙 팁과강좌는 전부, 나머지 사이트는 제목 키워드로 거른다
+TIP_KW = re.compile(r"꿀팁|팁|방법|하는\s?법|노하우|정리|모음|총정리|추천|절약|아끼|환급|지원금|혜택|할인|무료|신청|"
+                    r"부업|재테크|N잡|앱테크|짠테크|적금|청약|연말정산|세금|보험|"
+                    r"설정|단축키|엑셀|AI|챗GPT|ChatGPT|앱|어플|크롬|아이폰|갤럭시|윈도|"
+                    r"알아두면|모르면|필수|체크리스트|살림|청소|세탁|자취|생활", re.I)
+
+
+def src_clien(pages=4, days=7):
+    cutoff = (dt.datetime.now(KST) - dt.timedelta(days=days)).strftime("%Y-%m-%d")
+    out = []
+    for p in range(pages):
+        s = get(f"https://www.clien.net/service/board/lecture?po={p}")  # 최신순
+        for r in s.select("div.list_item.symph_row"):
+            a = r.select_one("a.list_subject")
+            t = r.select_one(".subject_fixed")
+            if not a or not t:
+                continue
+            cat = r.select_one(".category")
+            ts = r.select_one(".timestamp")
+            if not ts or ts.get_text(strip=True)[:10] < cutoff:
+                continue
+            out.append(dict(site="클리앙 팁", title=(f"[{cat.get_text(strip=True)}] " if cat else "") + t.get_text(strip=True),
+                            url=norm_url("https://www.clien.net" + a["href"]),
+                            views=num((r.select_one(".hit") or a).get_text()),
+                            comments=num(r.get("data-comment-count")),
+                            time=ts.get_text(strip=True)[:16] if ts else ""))
+    return out
+
+
 def load_seen():
     if not SEEN.exists():
         return set()
@@ -126,11 +158,21 @@ def load_seen():
 def cmd_list(args):
     seen = load_seen()
     rows = []
-    for fn in (src_pann, src_dc, src_instiz):
+    if args.mode == "tips":
+        fns = (src_clien, lambda: src_pann("total"), lambda: src_pann("life"),
+               lambda: src_dc(3, ent_only=False), src_instiz)
+        sites = ("클리앙 팁", "네이트판", "디시 실베", "인스티즈")
+    else:
+        fns = (src_pann, src_dc, src_instiz)
+        sites = ("네이트판", "디시 실베", "인스티즈")
+    for fn in fns:
         try:
-            rows += fn()
+            got = fn()
+            if args.mode == "tips":
+                got = [r for r in got if r["site"] == "클리앙 팁" or TIP_KW.search(r["title"])]
+            rows += got
         except Exception as e:  # 한 사이트가 죽어도 나머지는 진행
-            print(f"# {fn.__name__} 실패: {e}", file=sys.stderr)
+            print(f"# {getattr(fn, '__name__', 'src')} 실패: {e}", file=sys.stderr)
     uniq = {}
     for r in rows:
         if r["url"] in seen:
@@ -139,7 +181,7 @@ def cmd_list(args):
             uniq[r["url"]] = r
     # 사이트마다 조회수 규모가 달라서 사이트별 상위 N개씩 따로 뽑는다
     print("site\tviews\tcomments\ttime\ttitle\turl")
-    for site in ("네이트판", "디시 실베", "인스티즈"):
+    for site in sites:
         part = [r for r in uniq.values() if r["site"] == site]
         part.sort(key=lambda r: (r["comments"] * 20 + r["views"]), reverse=True)
         for r in part[: args.limit]:
@@ -166,6 +208,12 @@ def cmd_body(args):
             v = s.select_one(".gall_count")
             views = v.get_text(strip=True) if v else ""
             cm = s.select_one(".gall_comment")
+        elif "clien" in u:
+            body = s.select_one(".post_article")
+            when = s.select_one(".post_author .view_count.date, .post_date")
+            v = s.select_one(".view_info, .view_count:not(.date)")
+            views = v.get_text(" ", strip=True)[:20] if v else ""
+            cm = s.select_one(".post_reply .reply_count, #comment-head .comment_count")
         else:
             body = s.select_one("#memo_content_1")
             when = s.select_one(".tb_left span, .date, #ingiinfo")
@@ -217,14 +265,23 @@ def cmd_export(args):
             w.writerow([stamp, x["site"], x["issue"], x["tone"], x["posted"], x["reaction"],
                         norm_url(x["url"]), len(x["text"]), x["text"]])
     # 날짜별 결과 파일 (하루에 여러 번 돌면 이어 붙임)
-    out = ROOT / "outputs" / f"{now:%Y-%m-%d}-커뮤니티-X글.md"
+    label = "꿀팁" if args.prefix == "꿀팁" else "연예"
+    out = ROOT / "outputs" / f"{now:%Y-%m-%d}-커뮤니티-{label}-X글.md"
+    if label == "연예" and (ROOT / "outputs" / f"{now:%Y-%m-%d}-커뮤니티-X글.md").exists():
+        out = ROOT / "outputs" / f"{now:%Y-%m-%d}-커뮤니티-X글.md"  # 기존 파일명 유지
     with out.open("a", encoding="utf-8") as f:
         if out.stat().st_size == 0:
-            f.write(f"# 커뮤니티 연예 화제글 → X 초안 ({now:%Y-%m-%d})\n")
+            f.write(f"# 커뮤니티 {label} 화제글 → X 초안 ({now:%Y-%m-%d})\n")
         f.write(f"\n## {now:%H:%M} 수집분 ({len(items)}건)\n")
         for i, x in enumerate(items, 1):
             f.write(f"\n### {i}. [{x['site']}] {x['issue']} ({x['tone']}, {len(x['text'])}자)\n")
             f.write(f"- 작성: {x['posted']} | 반응: {x['reaction']}\n\n```text\n{x['text']}\n```\n")
+    # 모바일용: 건별 txt (복사해서 바로 붙여넣기)
+    tdir = ROOT / "outputs" / "txt" / f"{now:%Y-%m-%d}"
+    tdir.mkdir(parents=True, exist_ok=True)
+    for i, x in enumerate(items, 1):
+        safe = re.sub(r"[^\w가-힣]+", "_", x["issue"]).strip("_")[:30]
+        (tdir / f"{now:%H%M}_{args.prefix}{i:02d}_{safe}.txt").write_text(x["text"] + "\n", encoding="utf-8")
     # 중복 방지 기록
     for x in items:
         args.urls = [x["url"]] + x.get("related", [])
@@ -236,10 +293,10 @@ def cmd_export(args):
 def main():
     ap = argparse.ArgumentParser()
     sp = ap.add_subparsers(dest="cmd", required=True)
-    a = sp.add_parser("list"); a.add_argument("--limit", type=int, default=15, help="사이트별 개수"); a.set_defaults(fn=cmd_list)
+    a = sp.add_parser("list"); a.add_argument("--limit", type=int, default=15, help="사이트별 개수"); a.add_argument("--mode", choices=["celeb", "tips"], default="celeb"); a.set_defaults(fn=cmd_list)
     b = sp.add_parser("body"); b.add_argument("urls", nargs="+"); b.add_argument("--chars", type=int, default=600); b.set_defaults(fn=cmd_body)
     c = sp.add_parser("mark"); c.add_argument("urls", nargs="+"); c.add_argument("--issue", default=""); c.set_defaults(fn=cmd_mark)
-    e = sp.add_parser("export"); e.add_argument("json"); e.set_defaults(fn=cmd_export)
+    e = sp.add_parser("export"); e.add_argument("json"); e.add_argument("--prefix", default="연예", help="연예 / 꿀팁"); e.set_defaults(fn=cmd_export)
     args = ap.parse_args()
     args.fn(args)
 
