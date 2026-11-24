@@ -7,6 +7,7 @@
                                      워터마크 없는 원본 다운로드 → X 호환 H.264 mp4로 변환
                                      → outputs/videos/날짜/ 에 mp4 + 출처 txt 저장, 중복 기록
                                      --still : 대표 장면 jpg(짤)도 같이 저장
+  pack                               오늘 폴더에서 마지막 zip 이후 새로 받은 mp4·jpg·txt를 zip 하나로 묶기
   seen                               지금까지 받은 영상 목록
 
 틱톡은 yt-dlp의 원본 스트림(format_note에 watermarked 없는 것)을 받는다.
@@ -130,6 +131,24 @@ def cmd_get(args):
     print(f"저장: {mp4.relative_to(ROOT)} ({size:.1f}MB)" + (" + 짤 jpg" if args.still else ""))
 
 
+def cmd_pack(args):
+    import zipfile
+    now = dt.datetime.now(KST)
+    d = ROOT / "outputs" / "videos" / (args.date or f"{now:%Y-%m-%d}")
+    if not d.exists():
+        print("오늘 받은 파일 없음"); return
+    zips = sorted(d.glob("*.zip"), key=lambda p: p.stat().st_mtime)
+    since = zips[-1].stat().st_mtime if zips else 0
+    files = sorted(p for p in d.iterdir() if p.suffix in (".mp4", ".jpg", ".txt") and p.stat().st_mtime > since)
+    if not files:
+        print("새로 묶을 파일 없음"); return
+    z = d / f"묶음_{now:%m%d_%H%M}.zip"
+    with zipfile.ZipFile(z, "w", zipfile.ZIP_STORED) as zf:  # mp4는 이미 압축돼 있어서 저장만
+        for f in files:
+            zf.write(f, f.name)
+    print(f"zip: {z.relative_to(ROOT)} ({len(files)}개, {z.stat().st_size/1e6:.1f}MB)")
+
+
 def cmd_seen(args):
     for r in load_seen().values():
         print(f"{r['saved_at']}\t{r['cat']}\t{r['title']}\t{r['url']}")
@@ -142,6 +161,7 @@ def main():
     g = sp.add_parser("get"); g.add_argument("url"); g.add_argument("--cat", choices=["동물", "음식"], required=True)
     g.add_argument("--title", required=True); g.add_argument("--still", action="store_true")
     g.add_argument("--force", action="store_true"); g.set_defaults(fn=cmd_get)
+    k = sp.add_parser("pack"); k.add_argument("--date", help="YYYY-MM-DD (기본: 오늘)"); k.set_defaults(fn=cmd_pack)
     s = sp.add_parser("seen"); s.set_defaults(fn=cmd_seen)
     args = ap.parse_args()
     args.fn(args)
