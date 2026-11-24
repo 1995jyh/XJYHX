@@ -54,6 +54,9 @@ def norm_url(u):
     m = re.search(r"clien\.net/service/board/(\w+)/(\d+)", u)
     if m:
         return f"https://www.clien.net/service/board/{m.group(1)}/{m.group(2)}"
+    m = re.search(r"mgallery/board/view/\?id=(\w+)&(?:amp;)?no=(\d+)", u)
+    if m:
+        return f"https://gall.dcinside.com/mgallery/board/view/?id={m.group(1)}&no={m.group(2)}"
     m = re.search(r"id=dcbest&(?:amp;)?no=(\d+)", u)
     if m:
         return f"https://gall.dcinside.com/board/view/?id=dcbest&no={m.group(1)}"
@@ -148,6 +151,49 @@ def src_clien(pages=4, days=7):
     return out
 
 
+# 아이돌 모드: 제목에 아이돌 관련 키워드가 있는 글만
+IDOL_KW = re.compile(r"아이돌|걸그룹|보이그룹|남돌|여돌|컴백|데뷔|음방|음악방송|1위|뮤비|MV|앨범|초동|차트|멜론|써클|"
+                     r"팬싸|팬미팅|콘서트|투어|직캠|챌린지|센터|막내|리더|연습생|오디션|소속사|"
+                     r"방탄|BTS|블랙핑크|블핑|에스파|aespa|아이브|IVE|뉴진스|르세라핌|세븐틴|스키즈|스트레이키즈|"
+                     r"트와이스|투바투|TXT|엔시티|NCT|엑소|레드벨벳|아일릿|ILLIT|키키|KiiiKiii|베이비몬스터|베몬|"
+                     r"라이즈|RIIZE|투어스|TWS|보넥도|제베원|엔하이픈|있지|ITZY|아이들|케플러|QWER|하츠투하츠|"
+                     r"올데프|코르티스|CORTIS|A2O|리센느|RESCENE|빅뱅|지드래곤|아이유|태연|장원영|카리나|윈터|"
+                     r"안유진|민지|하니|해린|정국|지민|뷔|제니|지수|로제|리사", re.I)
+
+
+def src_dc_gall(gid, mgallery=True, label="디시 걸그룹갤"):
+    base = "mgallery/board" if mgallery else "board"
+    s = get(f"https://gall.dcinside.com/{base}/lists/?id={gid}&exception_mode=recommend")
+    out = []
+    for tr in s.select("tr.ub-content"):
+        a = tr.select_one("td.gall_tit a")
+        num_td = tr.select_one("td.gall_num")
+        if not a or not num_td or not num_td.get_text(strip=True).isdigit():
+            continue
+        no = num_td.get_text(strip=True)
+        d = tr.select_one("td.gall_date")
+        out.append(dict(site=label, title=a.get_text(" ", strip=True),
+                        url=f"https://gall.dcinside.com/{base}/view/?id={gid}&no={no}",
+                        views=num(tr.select_one("td.gall_count").get_text()),
+                        comments=num((tr.select_one(".reply_num") or a).get_text()),
+                        time=(d.get("title") or d.get_text(strip=True))[:16] if d else ""))
+    return out
+
+
+def src_soompi():
+    """해외 K팝 뉴스(영문). 조회수 없음 → views=0"""
+    s = get("https://www.soompi.com/")
+    out, seen = [], set()
+    for a in s.find_all("a", href=re.compile(r"/article/\d+")):
+        t = a.get_text(" ", strip=True)
+        if len(t) < 25 or t in seen:
+            continue
+        seen.add(t)
+        href = a["href"] if a["href"].startswith("http") else "https://www.soompi.com" + a["href"]
+        out.append(dict(site="숨피(해외)", title=t, url=href.split("?")[0], views=0, comments=0, time=""))
+    return out
+
+
 def load_seen():
     if not SEEN.exists():
         return set()
@@ -158,7 +204,10 @@ def load_seen():
 def cmd_list(args):
     seen = load_seen()
     rows = []
-    if args.mode == "tips":
+    if args.mode == "idol":
+        fns = (src_pann, lambda: src_dc(3, ent_only=False), src_instiz, src_soompi)
+        sites = ("네이트판", "디시 실베", "인스티즈", "숨피(해외)")
+    elif args.mode == "tips":
         fns = (src_clien, lambda: src_pann("total"), lambda: src_pann("life"),
                lambda: src_dc(3, ent_only=False), src_instiz)
         sites = ("클리앙 팁", "네이트판", "디시 실베", "인스티즈")
@@ -170,6 +219,8 @@ def cmd_list(args):
             got = fn()
             if args.mode == "tips":
                 got = [r for r in got if r["site"] == "클리앙 팁" or TIP_KW.search(r["title"])]
+            elif args.mode == "idol":
+                got = [r for r in got if r["site"] == "숨피(해외)" or IDOL_KW.search(r["title"])]
             rows += got
         except Exception as e:  # 한 사이트가 죽어도 나머지는 진행
             print(f"# {getattr(fn, '__name__', 'src')} 실패: {e}", file=sys.stderr)
@@ -208,6 +259,10 @@ def cmd_body(args):
             v = s.select_one(".gall_count")
             views = v.get_text(strip=True) if v else ""
             cm = s.select_one(".gall_comment")
+        elif "soompi" in u:
+            body = s.select_one("article .article-wrapper, .article-wrapper, article")
+            when = s.select_one("time, .date-time")
+            views, cm = "", None
         elif "clien" in u:
             body = s.select_one(".post_article")
             when = s.select_one(".post_author .view_count.date, .post_date")
@@ -244,6 +299,63 @@ def cmd_mark(args):
                 seen.add(u)
 
 
+CHART_DIR = ROOT / "data" / "charts"
+
+
+def fetch_melon():
+    s = get("https://www.melon.com/chart/index.htm")
+    out = []
+    for tr in s.select("tr.lst50, tr.lst100"):
+        t = tr.select_one(".ellipsis.rank01 a"); a = tr.select_one(".ellipsis.rank02 a")
+        out.append(dict(rank=num(tr.select_one(".rank").get_text()), title=t.get_text(strip=True) if t else "",
+                        artist=a.get_text(strip=True) if a else ""))
+    return out
+
+
+def fetch_genie():
+    out = []
+    for pg in (1, 2):
+        s = get(f"https://www.genie.co.kr/chart/top200?pg={pg}")
+        for tr in s.select("tr.list"):
+            nb = tr.select_one(".number")
+            rank = re.match(r"\d+", (nb.contents[0] if nb and nb.contents else "").strip())
+            out.append(dict(rank=int(rank.group()) if rank else 0,
+                            title=tr.select_one("a.title").get_text(strip=True),
+                            artist=tr.select_one("a.artist").get_text(strip=True)))
+    return out
+
+
+def cmd_chart(args):
+    """멜론·지니 TOP 차트 스냅샷 저장 + 직전 스냅샷 대비 변동(신규 진입·급상승) 출력"""
+    CHART_DIR.mkdir(parents=True, exist_ok=True)
+    now = dt.datetime.now(KST)
+    for name, fn in (("melon", fetch_melon), ("genie", fetch_genie)):
+        try:
+            cur = fn()
+        except Exception as e:
+            print(f"# {name} 실패: {e}"); continue
+        prev_files = sorted(CHART_DIR.glob(f"*_{name}.csv"))
+        prev = {}
+        if prev_files:
+            with prev_files[-1].open(encoding="utf-8") as f:
+                prev = {(r["title"], r["artist"]): int(r["rank"]) for r in csv.DictReader(f)}
+        snap = CHART_DIR / f"{now:%Y-%m-%d_%H%M}_{name}.csv"
+        with snap.open("w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=["rank", "title", "artist"]); w.writeheader(); w.writerows(cur)
+        print(f"## {name} TOP{args.top} ({now:%m-%d %H:%M}, 비교: {prev_files[-1].stem if prev_files else '없음'})")
+        for r in cur[: args.top]:
+            p = prev.get((r["title"], r["artist"]))
+            ch = "NEW" if prev and p is None else ("-" if p is None or p == r["rank"] else f"{p - r['rank']:+d}")
+            print(f"{r['rank']}\t{ch}\t{r['title']}\t{r['artist']}")
+        if prev:
+            jumps = [(prev[(r['title'], r['artist'])] - r['rank'], r) for r in cur if (r['title'], r['artist']) in prev]
+            jumps = [j for j in jumps if j[0] >= 10]
+            new = [r for r in cur if (r['title'], r['artist']) not in prev]
+            print("급상승(10계단+): " + ", ".join(f"{r['artist']}-{r['title']}({d:+d}→{r['rank']}위)" for d, r in sorted(jumps, key=lambda x: -x[0])[:5]) or "급상승: 없음")
+            print("신규 진입: " + ", ".join(f"{r['artist']}-{r['title']}({r['rank']}위)" for r in new[:5]) or "신규 진입: 없음")
+        print()
+
+
 POSTS = ROOT / "data" / "community_posts.csv"
 POST_COLS = ["collected_at", "site", "issue", "tone", "posted", "reaction", "url", "chars", "text"]
 
@@ -254,7 +366,9 @@ def cmd_export(args):
     now = dt.datetime.now(KST)
     stamp = now.strftime("%Y-%m-%d %H:%M")
     seen = load_seen()
-    items = [x for x in items if norm_url(x["url"]) not in seen]
+    # 차트 글은 같은 차트 URL을 매번 쓰므로 중복 검사·기록 대상에서 뺀다
+    is_chart = lambda x: "차트" in x["site"]
+    items = [x for x in items if is_chart(x) or norm_url(x["url"]) not in seen]
     # 시트용 누적 CSV
     new = not POSTS.exists()
     with POSTS.open("a", encoding="utf-8", newline="") as f:
@@ -265,7 +379,7 @@ def cmd_export(args):
             w.writerow([stamp, x["site"], x["issue"], x["tone"], x["posted"], x["reaction"],
                         norm_url(x["url"]), len(x["text"]), x["text"]])
     # 날짜별 결과 파일 (하루에 여러 번 돌면 이어 붙임)
-    label = "꿀팁" if args.prefix == "꿀팁" else "연예"
+    label = args.prefix if args.prefix in ("꿀팁", "아이돌") else "연예"
     out = ROOT / "outputs" / f"{now:%Y-%m-%d}-커뮤니티-{label}-X글.md"
     if label == "연예" and (ROOT / "outputs" / f"{now:%Y-%m-%d}-커뮤니티-X글.md").exists():
         out = ROOT / "outputs" / f"{now:%Y-%m-%d}-커뮤니티-X글.md"  # 기존 파일명 유지
@@ -284,6 +398,8 @@ def cmd_export(args):
         (tdir / f"{now:%H%M}_{args.prefix}{i:02d}_{safe}.txt").write_text(x["text"] + "\n", encoding="utf-8")
     # 중복 방지 기록
     for x in items:
+        if is_chart(x):
+            continue
         args.urls = [x["url"]] + x.get("related", [])
         args.issue = x["issue"]
         cmd_mark(args)
@@ -293,10 +409,11 @@ def cmd_export(args):
 def main():
     ap = argparse.ArgumentParser()
     sp = ap.add_subparsers(dest="cmd", required=True)
-    a = sp.add_parser("list"); a.add_argument("--limit", type=int, default=15, help="사이트별 개수"); a.add_argument("--mode", choices=["celeb", "tips"], default="celeb"); a.set_defaults(fn=cmd_list)
+    a = sp.add_parser("list"); a.add_argument("--limit", type=int, default=15, help="사이트별 개수"); a.add_argument("--mode", choices=["celeb", "tips", "idol"], default="celeb"); a.set_defaults(fn=cmd_list)
     b = sp.add_parser("body"); b.add_argument("urls", nargs="+"); b.add_argument("--chars", type=int, default=600); b.set_defaults(fn=cmd_body)
     c = sp.add_parser("mark"); c.add_argument("urls", nargs="+"); c.add_argument("--issue", default=""); c.set_defaults(fn=cmd_mark)
-    e = sp.add_parser("export"); e.add_argument("json"); e.add_argument("--prefix", default="연예", help="연예 / 꿀팁"); e.set_defaults(fn=cmd_export)
+    g = sp.add_parser("chart"); g.add_argument("--top", type=int, default=10); g.set_defaults(fn=cmd_chart)
+    e = sp.add_parser("export"); e.add_argument("json"); e.add_argument("--prefix", default="연예", help="연예 / 꿀팁 / 아이돌"); e.set_defaults(fn=cmd_export)
     args = ap.parse_args()
     args.fn(args)
 

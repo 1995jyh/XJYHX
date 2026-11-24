@@ -56,3 +56,11 @@
 
 ## 모바일용 txt
 `export` 하면 `outputs/txt/YYYY-MM-DD/HHMM_연예01_이슈.txt`처럼 건별 txt가 같이 생성됨. 파일 열어서 전체 복사 → X에 붙여넣기.
+
+## 아이돌 모드 (아이돌 소식 + 음원 차트) — 2026-11-24 추가
+
+- 차트: `python3 scripts/community_collect.py chart` → 멜론 TOP100·지니 TOP200 스냅샷을 `data/charts/`에 저장하고 직전 스냅샷 대비 변동(급상승 10계단+, 신규 진입) 출력. 차트 글은 "○○ 기준" 시각을 꼭 적는다.
+- 소식: `python3 scripts/community_collect.py list --mode idol` → 판·디시 실베·인스티즈(아이돌 키워드) + 숨피(해외 영문 K팝 뉴스)
+- 숨피 기사는 영어 원문 내용만 한국어로 요약. 기사에 없는 반응·수치를 덧붙이지 않는다.
+- 외모 평가(○○인 줄 알았는데, 얼굴로 압살 등)·특정 멤버 비난 글은 제외.
+- 저장: `export --prefix 아이돌 파일.json` (차트 글은 site에 "차트"를 넣으면 중복 검사에서 빠짐)
