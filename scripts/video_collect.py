@@ -116,11 +116,22 @@ def cmd_get(args):
                     "-metadata", f"title={args.title} (출처 @{up})", "-metadata", f"artist=@{up}",
                     "-metadata", f"comment=출처: @{up} / 원본: {d.get('webpage_url', args.url)}", str(mp4)], check=True)
     raw.unlink()
-    if args.still:  # 짤 후보 3장 (20%·50%·80% 지점) → 제일 나은 것 골라 쓰기
+    if args.still:  # 짤 후보 5장 뽑고, 선명도 상위 3장만 남김 (동물이 있는지는 sheet로 한 번에 확인)
+        from PIL import Image, ImageFilter, ImageStat
         dur = d.get("duration") or 4
-        for i, r_ in enumerate((0.2, 0.5, 0.8), 1):
+        cands = []
+        for i, r_ in enumerate((0.15, 0.35, 0.5, 0.65, 0.85), 1):
+            jp = base.parent / f"{base.name}_후보{i}.jpg"
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(round(dur * r_, 1)), "-i", str(mp4),
-                            "-frames:v", "1", "-q:v", "2", str(base.parent / f"{base.name}_짤{i}.jpg")], check=True)
+                            "-frames:v", "1", "-q:v", "2", str(jp)], check=True)
+            g = Image.open(jp).convert("L"); g.thumbnail((360, 640))
+            cands.append((ImageStat.Stat(g.filter(ImageFilter.FIND_EDGES)).var[0], jp))
+        cands.sort(reverse=True)
+        for k, (_, jp) in enumerate(cands):
+            if k < 3:
+                jp.rename(base.parent / f"{base.name}_짤{k+1}.jpg")
+            else:
+                jp.unlink()
     credit = (f"{args.title}\n\n"
               f"카테고리: {args.cat}\n길이: {round(d.get('duration') or 0)}초\n"
               f"조회수: {fmt_n(d.get('view_count'))} / 좋아요: {fmt_n(d.get('like_count'))}\n"
@@ -157,6 +168,87 @@ def cmd_pack(args):
     print(f"zip: {z.relative_to(ROOT)} ({len(files)}개, {z.stat().st_size/1e6:.1f}MB)")
 
 
+CREATORS = ROOT / "data" / "creators.csv"
+DUR = {"동물": (1, 29), "음식": (15, 55)}
+
+
+def load_creators():
+    """data/creators.csv (handle,cat,blocked). 없으면 seen 기록의 업로더로 시작."""
+    rows = {}
+    if CREATORS.exists():
+        with CREATORS.open(encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                rows[r["handle"]] = r
+    for r in load_seen().values():
+        if r.get("uploader") and r["uploader"] not in rows:
+            rows[r["uploader"]] = {"handle": r["uploader"], "cat": r["cat"], "blocked": ""}
+    with CREATORS.open("w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["handle", "cat", "blocked"]); w.writeheader(); w.writerows(rows.values())
+    return [r for r in rows.values() if not r.get("blocked")]
+
+
+def cmd_discover(args):
+    """웹 검색 없이: 검증된 계정들의 최근 영상 목록을 훑어 조건 맞는 후보만 출력 (토큰 절약)."""
+    import random
+    seen = load_seen()
+    creators = load_creators()
+    random.shuffle(creators)
+    out = []
+    for c in creators[: args.max_creators]:
+        r = subprocess.run(YTDLP + ["--flat-playlist", "-I", f"1:{args.per_creator}", "--print",
+                                    "%(id)s\t%(view_count)s\t%(duration)s\t%(title)s",
+                                    f"https://www.tiktok.com/@{c['handle']}"],
+                           capture_output=True, text=True, timeout=120)
+        for line in r.stdout.splitlines():
+            try:
+                vid, views, sec, title = line.split("\t", 3)
+                views, sec = int(views), float(sec)
+            except ValueError:
+                continue
+            lo, hi = DUR[c["cat"]]
+            if vid in seen or not (lo <= sec <= hi) or views < args.min_views:
+                continue
+            if re.search(r"#(ai|sora|aiart|aigenerated)\b", title, re.I):
+                continue
+            up = dt.datetime.fromtimestamp(int(vid) >> 32, KST).strftime("%Y-%m-%d")  # 틱톡 ID에 업로드 시각이 들어 있음
+            out.append((c["cat"], views, int(sec), up, c["handle"], title.replace("\n", " ")[:70],
+                        f"https://www.tiktok.com/@{c['handle']}/video/{vid}"))
+    print("cat\tviews\tsec\tupload\tuploader\tcaption\turl")
+    for cat in DUR:
+        per = {}
+        picked = []
+        for o in sorted([o for o in out if o[0] == cat], key=lambda o: -o[1]):
+            if per.get(o[4], 0) >= 2:  # 한 계정은 최대 2개까지만 (다양성)
+                continue
+            per[o[4]] = per.get(o[4], 0) + 1
+            picked.append(o)
+        for o in picked[: args.top]:
+            print("\t".join(map(str, o)))
+
+
+def cmd_sheet(args):
+    """마지막 zip 이후 새 짤들을 한 장짜리 미리보기(번호 붙임)로 묶어 저장 → 이미지 1장만 보고 고르기"""
+    from PIL import Image, ImageDraw
+    now = dt.datetime.now(KST)
+    d = ROOT / "outputs" / "videos" / f"{now:%Y-%m-%d}"
+    zips = sorted(d.glob("*.zip"), key=lambda p: p.stat().st_mtime)
+    since = zips[-1].stat().st_mtime if zips else 0
+    jpgs = sorted(p for p in d.glob("*_짤*.jpg") if p.stat().st_mtime > since)
+    if not jpgs:
+        print("새 짤 없음"); return
+    th = [Image.open(p).convert("RGB") for p in jpgs]
+    for im in th:
+        im.thumbnail((200, 356))
+    W = sum(im.width for im in th); H = max(im.height for im in th)
+    sheet = Image.new("RGB", (W, H + 22), "white"); x = 0; dr = ImageDraw.Draw(sheet)
+    for i, im in enumerate(th, 1):
+        sheet.paste(im, (x, 22)); dr.text((x + 4, 4), str(i), fill="black"); x += im.width
+    out = Path(args.out); sheet.save(out, quality=80)
+    print(f"sheet: {out}")
+    for i, p in enumerate(jpgs, 1):
+        print(f"{i}\t{p.relative_to(ROOT)}")
+
+
 def cmd_seen(args):
     for r in load_seen().values():
         print(f"{r['saved_at']}\t{r['cat']}\t{r['title']}\t{r['url']}")
@@ -170,6 +262,10 @@ def main():
     g.add_argument("--title", required=True); g.add_argument("--still", action="store_true")
     g.add_argument("--force", action="store_true"); g.set_defaults(fn=cmd_get)
     k = sp.add_parser("pack"); k.add_argument("--date", help="YYYY-MM-DD (기본: 오늘)"); k.set_defaults(fn=cmd_pack)
+    q = sp.add_parser("discover"); q.add_argument("--max-creators", type=int, default=25)
+    q.add_argument("--per-creator", type=int, default=12); q.add_argument("--min-views", type=int, default=100000)
+    q.add_argument("--top", type=int, default=8); q.set_defaults(fn=cmd_discover)
+    h = sp.add_parser("sheet"); h.add_argument("--out", required=True); h.set_defaults(fn=cmd_sheet)
     s = sp.add_parser("seen"); s.set_defaults(fn=cmd_seen)
     args = ap.parse_args()
     args.fn(args)
