@@ -98,17 +98,23 @@ def cmd_get(args):
             if (m := re.match(rf"{args.cat}_(\d+)_", p.name))]
     n = max(nums, default=0) + 1  # 중간 파일을 지워도 번호가 겹치지 않게
     safe = re.sub(r"[^\w가-힣]+", "_", args.title).strip("_")[:30]
-    base = outdir / f"{args.cat}_{n:02d}_{safe}"
-    raw = base.with_suffix(".raw.mp4")
+    up = d.get("uploader") or "unknown"
+    up_safe = re.sub(r"[^\w.]+", "_", up)
+    # 파일 이름에 출처 계정 포함: 동물_01_제목_@계정 (계정에 '.'이 있어 with_suffix 대신 문자열로 붙임)
+    base = outdir / f"{args.cat}_{n:02d}_{safe}_@{up_safe}"
+    F = lambda ext: base.parent / f"{base.name}{ext}"
+    raw = F(".raw.mp4")
     r = subprocess.run(YTDLP + ["-f", fid, "-o", str(raw), args.url], capture_output=True, text=True, timeout=300)
     if r.returncode != 0 or not raw.exists():
         print("다운로드 실패:", r.stderr.strip().splitlines()[-1:] if r.stderr else "")
         return
-    mp4 = base.with_suffix(".mp4")
+    mp4 = F(".mp4")
     # X 호환: H.264 + AAC, 최대 1080x1920, faststart
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(raw), "-c:v", "libx264", "-preset", "veryfast",
                     "-crf", "26", "-vf", "scale='min(720,iw)':-2", "-pix_fmt", "yuv420p",
-                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(mp4)], check=True)
+                    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+                    "-metadata", f"title={args.title} (출처 @{up})", "-metadata", f"artist=@{up}",
+                    "-metadata", f"comment=출처: @{up} / 원본: {d.get('webpage_url', args.url)}", str(mp4)], check=True)
     raw.unlink()
     if args.still:  # 짤 후보 3장 (20%·50%·80% 지점) → 제일 나은 것 골라 쓰기
         dur = d.get("duration") or 4
@@ -119,7 +125,7 @@ def cmd_get(args):
               f"카테고리: {args.cat}\n길이: {round(d.get('duration') or 0)}초\n"
               f"조회수: {fmt_n(d.get('view_count'))} / 좋아요: {fmt_n(d.get('like_count'))}\n"
               f"업로드: {d.get('upload_date','')}\n출처: @{d.get('uploader','')}\n원본: {d.get('webpage_url', args.url)}\n")
-    base.with_suffix(".txt").write_text(credit, encoding="utf-8")
+    F(".txt").write_text(credit, encoding="utf-8")
     SEEN.parent.mkdir(parents=True, exist_ok=True)
     new = not SEEN.exists()
     with SEEN.open("a", encoding="utf-8", newline="") as f:

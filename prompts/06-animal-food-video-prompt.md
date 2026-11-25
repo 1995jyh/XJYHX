@@ -19,7 +19,7 @@ X·쇼츠에 바로 올릴 수 있는 **해외 실사 동물 영상 + 음식 영
 2. `python3 scripts/video_collect.py meta URL ...` → 조회수·길이·업로드일·[중복] 확인
 3. 조건 맞는 것만 `python3 scripts/video_collect.py get URL --cat 동물|음식 --title "클릭 유도 한글 제목" [--still]`
    - 동물은 `--still` → 짤 후보 3장 생성. 직접 보고 동물이 잘 나온 것만 남기고 나머지 삭제
-   - 결과: `outputs/videos/날짜/카테고리_NN_제목.mp4` (720p H.264, X 업로드 호환) + 출처 txt
+   - 결과: `outputs/videos/날짜/카테고리_NN_제목_@출처계정.mp4` (720p H.264, X 업로드 호환, mp4 메타데이터에도 출처·원본 URL) + 출처 txt
 4. 사용자에게 mp4·짤·txt 파일 전송
 
 ## 업로드 시 주의 (출처)
