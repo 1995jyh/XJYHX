@@ -94,7 +94,9 @@ def cmd_get(args):
     now = dt.datetime.now(KST)
     outdir = ROOT / "outputs" / "videos" / f"{now:%Y-%m-%d}"
     outdir.mkdir(parents=True, exist_ok=True)
-    n = len([p for p in outdir.glob(f"{args.cat}_*.mp4")]) + 1
+    nums = [int(m.group(1)) for p in outdir.glob(f"{args.cat}_*.mp4")
+            if (m := re.match(rf"{args.cat}_(\d+)_", p.name))]
+    n = max(nums, default=0) + 1  # 중간 파일을 지워도 번호가 겹치지 않게
     safe = re.sub(r"[^\w가-힣]+", "_", args.title).strip("_")[:30]
     base = outdir / f"{args.cat}_{n:02d}_{safe}"
     raw = base.with_suffix(".raw.mp4")
