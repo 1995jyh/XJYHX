@@ -11,6 +11,7 @@
 | 3 | `prompts/03-x-viral-quote-prompt.md` | X 바이럴 게시물 탐색 & 인용글 초안 (200~500자) |
 | 4 | `prompts/04-overseas-video-collect-prompt.md` | 해외 실사 영상 10개 수집 (동물 5 + 음식·화제 5) |
 | 6 | `prompts/06-animal-food-video-prompt.md` | **(메인)** 동물·음식 영상 워터마크 없이 수집 + 동물 짤 (스크립트: `scripts/video_collect.py`) |
+| 7 | `prompts/07-hamster-trio-characters.md` | 햄스터 3형제(쌀떡·호떡·콩떡) 캐릭터 설정 + 이미지 생성 프롬프트 |
 | 5 | `prompts/05-community-celeb-x-prompt.md` | 국내 커뮤니티 연예 화제글 10건 → X 업로드글 (스크립트: `scripts/community_collect.py`) |
 
 ## 모바일 단축 명령
